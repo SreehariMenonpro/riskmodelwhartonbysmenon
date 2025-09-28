@@ -1,0 +1,115 @@
+# risk_model.py
+import yfinance as yf
+import pandas as pd
+import matplotlib.pyplot as plt
+
+class GlobalRiskAnalysisModel:
+    def __init__(self, tickers, start_date, end_date):
+        self.tickers = tickers
+        self.start_date = start_date
+        self.end_date = end_date
+        self.prices = pd.DataFrame()
+        self.returns = pd.DataFrame()
+        self.financial_data = pd.DataFrame()
+
+    def download_price_data(self):
+        self.prices = yf.download(self.tickers, start=self.start_date, end=self.end_date)['Adj Close']
+        self.returns = self.prices.pct_change().dropna()
+
+    def set_financial_data(self, financial_data):
+        self.financial_data = financial_data
+
+    def altman_z_score(self):
+        if self.financial_data.empty:
+            raise ValueError("Financial data not set.")
+        df = self.financial_data.copy()
+        df['z_score'] = (
+            1.2 * (df['working_capital'] / df['total_assets']) +
+            1.4 * (df['retained_earnings'] / df['total_assets']) +
+            3.3 * (df['ebit'] / df['total_assets']) +
+            0.6 * (df['market_value_equity'] / df['total_liabilities']) +
+            1.0 * (df['sales'] / df['total_assets'])
+        )
+        return df[['ticker', 'z_score']]
+
+    def historical_var(self, confidence_level=0.95):
+        if self.returns.empty:
+            raise ValueError("Returns data not available.")
+        var_pct = self.returns.quantile(1 - confidence_level)
+        var_amount = var_pct * 1_000_000  # Example portfolio of $1M
+        return var_pct, var_amount
+
+    def run_historical_scenarios(self, window=20):
+        if self.returns.empty:
+            raise ValueError("Returns data not available.")
+        results = {}
+        for ticker in self.returns.columns:
+            rolling_min = self.returns[ticker].rolling(window=window).min()
+            max_loss = rolling_min.min()
+            max_loss_date = rolling_min.idxmin()
+            results[ticker] = {'max_loss': max_loss, 'max_loss_date': max_loss_date}
+        return pd.DataFrame(results).T
+
+    def volatility_sizing(self, target_volatility=0.02):
+        vol = self.returns.std()
+        position_size = target_volatility / vol
+        return position_size
+
+    def plot_returns(self, tickers=None):
+        if tickers is None:
+            tickers = self.returns.columns.tolist()
+        self.returns[tickers].plot(title="Daily Returns")
+        plt.show()
+
+
+# -------------------------
+# Example usage
+# -------------------------
+if __name__ == "__main__":
+    # Define global tickers (expand as needed)
+    tickers = ['AAPL', 'TSLA', '7203.T', 'BABA', 'RDS-A']
+
+    # Initialize model
+    model = GlobalRiskAnalysisModel(tickers, '2020-01-01', '2023-01-01')
+
+    # Download price data and calculate returns
+    model.download_price_data()
+
+    # Example financial data for Altman Z-Score (dummy/sample data)
+    financial_data = pd.DataFrame({
+        'ticker': ['AAPL', 'TSLA', '7203.T', 'BABA', 'RDS-A'],
+        'working_capital': [5e9, 3e9, 4e9, 2e9, 3.5e9],
+        'retained_earnings': [2e10, 1e10, 1.5e10, 8e9, 1.2e10],
+        'ebit': [1.5e10, 5e9, 7e9, 3e9, 6e9],
+        'market_value_equity': [2e12, 8e11, 3e11, 4e11, 2.5e11],
+        'total_liabilities': [1e12, 4e11, 2e11, 1.5e11, 1.8e11],
+        'sales': [4e10, 2.5e10, 3e10, 2e10, 2.2e10],
+        'total_assets': [2.5e11, 1.2e11, 1.5e11, 9e10, 1.1e11]
+    })
+
+    model.set_financial_data(financial_data)
+
+    # Calculate Altman Z-Score
+    z_scores = model.altman_z_score()
+    print("Altman Z-Scores:")
+    print(z_scores)
+
+    # Calculate Historical VaR (95%)
+    var_pct, var_amount = model.historical_var(confidence_level=0.95)
+    print("\nHistorical VaR (95%) - Percentile:")
+    print(var_pct)
+    print("\nHistorical VaR (95%) - Dollar Amount:")
+    print(var_amount)
+
+    # Run Historical Scenarios (rolling 20-day max loss)
+    scenarios = model.run_historical_scenarios(window=20)
+    print("\nHistorical Scenarios (20-day rolling max loss):")
+    print(scenarios)
+
+    # Volatility Sizing for target 2% daily volatility
+    position_sizes = model.volatility_sizing(target_volatility=0.02)
+    print("\nVolatility Sizing (position size multiplier for target 2% daily vol):")
+    print(position_sizes)
+
+    # Plot returns for all tickers
+    model.plot_returns()
